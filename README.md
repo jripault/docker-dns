@@ -77,8 +77,8 @@ Now names not rooted in `example.com` will fail to resolve:
 Domains exposed by your containers can be read from labels definition. The key must starts with `domains.`, the value will be registered into the DNS to the IP of the container
 
     labels:
-        - "domains.entrepot=entrepot.cmap.local"
-        - "domains.wxs=wxs.cmap.local"
+        - "domains.1=example1.com"
+        - "domains.2=example2.com"
 
 License
 -------
