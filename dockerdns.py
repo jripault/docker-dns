@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-
-
 # dockerdns - simple, automatic, self-contained dns server for docker
 
 
@@ -41,7 +38,7 @@ EPILOG = '''
 '''
 
 
-Container = namedtuple('Container', 'id, name, running, addr')
+Container = namedtuple('Container', 'id, name, running, addr, domains')
 
 
 def log(msg, *args):
@@ -120,6 +117,7 @@ class DockerMonitor(object):
             rec = self._inspect(container['Id'])
             if rec.running:
                 self._table.add(rec.name, rec.addr)
+                self._handleDomains(rec)
 
         # read the docker event stream and update the name table
         for raw in events:
@@ -132,26 +130,34 @@ class DockerMonitor(object):
                     if rec:
                         if status == 'start':
                             self._table.add(rec.name, rec.addr)
+                            self._handleDomains(rec)
                         else:
                             self._table.remove(rec.name)
                 except Exception, e:
                     print str(e)
 
+    def _handleDomains(self, rec):
+        values = [ v for k,v in rec.domains.items() if 'domains' in k]
+        print values
+        for domain in values:
+            self._table.add(domain, rec.addr)
+
     def _inspect(self, cid):
         # get full details on this container from docker
-        rec = self._docker.inspect_container(cid)
-
+        metadatas = self._docker.inspect_container(cid)
         # ensure name is valid, and append our domain
-        name = get(rec, 'Name')
+        name = metadatas['Name']
         if not name:
             return None
         name = RE_VALIDNAME.sub('', name).rstrip('.')
         name += '.' + self._domain
+
         return Container(
-            get(rec, 'Id'),
+            metadatas['Id'],
             name,
-            get(rec, 'State', 'Running'),
-            get(rec, 'NetworkSettings', 'IPAddress')
+            metadatas['State']['Running'],
+            metadatas['NetworkSettings']['IPAddress'],
+            metadatas['Config']['Labels']
         )
 
 
@@ -183,8 +189,11 @@ class DnsServer(DatagramServer):
     def _reply(self, rec, addr=None):
         reply = DNSRecord(DNSHeader(id=rec.header.id, qr=1, aa=1, ra=1), q=rec.q)
         if addr:
-            reply.add_answer(RR(rec.q.qname, QTYPE.A, rdata=A(addr)))
-        return reply.pack()
+            qtype = QTYPE.A if QTYPE.A == rec.q.qtype else QTYPE.AAAA
+            reply.add_answer(RR(rec.q.qname, qtype, rdata=A(addr)))
+
+        rep = reply.pack()
+        return rep
 
     def _resolve(self, name):
         if not self._resolver:
@@ -197,19 +206,20 @@ class DnsServer(DatagramServer):
                 print msg
 
 
-def stop(*servers): 
+def stop(*servers):
     for svr in servers:
-        if svr.started: 
-            svr.stop() 
-    sys.exit(signal.SIGINT) 
+        if svr.started:
+            svr.stop()
+    sys.exit(signal.SIGINT)
 
 def splitrecord(rec):
-    m = re.match('([a-zA-Z0-9_-]*):((?:[12]?[0-9]{1,2}\.){3}(?:[12]?[0-9]{1,2}){1}$)', rec)
-    if not m:
-        log('--record has invalid format, expects: `--record <host>:<ip>`')
-        sys.exit(1)
-    else:
-        return (m.group(1), m.group(2))
+    #m = re.match('([a-zA-Z0-9_-]*):((?:[12]?[0-9]{1,2}\.){3}(?:[12]?[0-9]{1,2}){1}$)', rec)
+    #if not m:
+    #    log('--record has invalid format, expects: `--record <host>:<ip>`')
+    #    sys.exit(1)
+    #else:
+    #    return (m.group(1), m.group(2))
+    return rec.split(":")
 
 def check(args):
     url = urlparse(args.docker)
@@ -245,6 +255,7 @@ def parse_args():
 
 
 def main():
+    log("Custom Docker DNS")
     global QUIET
     args = parse_args()
     check(args)
@@ -253,14 +264,13 @@ def main():
 
     QUIET = args.quiet
     resolver = () if args.no_recursion else args.resolver
-    table = NameTable([(k + "." + args.domain, v) for (k, v) in args.record])
+    table = NameTable([(k.strip(), v) for (k, v) in args.record])
     monitor = DockerMonitor(docker.Client(args.docker), table, args.domain)
     dns = DnsServer(args.dns_bind, table, resolver)
-    gevent.signal(signal.SIGINT, stop, dns) 
+    gevent.signal(signal.SIGINT, stop, dns)
     dns.start()
     gevent.wait([gevent.spawn(monitor.run)])
 
 
 if __name__ == '__main__':
     main()
-
