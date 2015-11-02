@@ -74,7 +74,12 @@ Now names not rooted in `example.com` will fail to resolve:
     root@4d15342387b0:/# ping github.com
     ping: unknown host github.com
 
+Domains exposed by your containers can be read from labels definition. The key must starts with `domains.`, the value will be registered into the DNS to the IP of the container
 
+  labels:
+    - "domains.entrepot=entrepot.cmap.local"
+    - "domains.wxs=wxs.cmap.local"
+	
 License
 -------
 
